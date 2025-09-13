@@ -1,0 +1,71 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Neighborhood {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  squares Square[]
+
+  @@map("neighborhoods")
+}
+
+model Square {
+  id             String   @id @default(cuid())
+  name           String
+  neighborhoodId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  neighborhood Neighborhood @relation(fields: [neighborhoodId], references: [id], onDelete: Cascade)
+  houses       House[]
+
+  @@map("squares")
+}
+
+model House {
+  id           String   @id @default(cuid())
+  houseNumber  String
+  ownerName    String
+  ownerPhone   String
+  isOccupied   Boolean  @default(true)
+  hasPaid      Boolean  @default(false)
+  paymentType  PaymentType? @default(SMALL_METER)
+  requiredAmount Float?
+  receiptImage String?
+  squareId     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  square Square @relation(fields: [squareId], references: [id], onDelete: Cascade)
+
+  @@map("houses")
+}
+
+enum PaymentType {
+  SMALL_METER    // عداد صغير
+  MEDIUM_METER   // عداد متوسط
+  LARGE_METER    // عداد كبير
+}
