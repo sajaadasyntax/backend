@@ -4,11 +4,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
 const config = require('./server-config');
+const logger = require('./logger');
+const { requestLogger, errorLogger, corsErrorLogger } = require('./middleware/requestLogger');
 
 const app = express();
 const prisma = new PrismaClient();
 
 // Middleware
+app.use(requestLogger);
+app.use(corsErrorLogger);
 app.use(cors({
   origin: config.CORS_ORIGINS,
   credentials: true
@@ -24,13 +28,16 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
+    logger.auth('Token validation', 'unknown', false, req.ip);
     return res.status(401).json({ message: 'Access token required' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
+      logger.auth('Token validation', 'unknown', false, req.ip);
       return res.status(403).json({ message: 'Invalid token' });
     }
+    logger.auth('Token validation', user.username, true, req.ip);
     req.user = user;
     next();
   });
@@ -40,10 +47,12 @@ const authenticateToken = (req, res, next) => {
 
 // Register
 app.post('/api/register', async (req, res) => {
+  const startTime = Date.now();
   try {
     const { username, password } = req.body;
 
     if (!username || !password) {
+      logger.auth('Registration attempt', username, false, req.ip);
       return res.status(400).json({ message: 'Username and password are required' });
     }
 
@@ -56,11 +65,18 @@ app.post('/api/register', async (req, res) => {
       },
     });
 
+    const duration = Date.now() - startTime;
+    logger.database('CREATE', 'user', duration);
+    logger.auth('Registration', username, true, req.ip);
     res.status(201).json({ message: 'User created successfully', userId: user.id });
   } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.database('CREATE', 'user', duration, error);
     if (error.code === 'P2002') {
+      logger.auth('Registration attempt', req.body.username, false, req.ip);
       res.status(400).json({ message: 'Username already exists' });
     } else {
+      logger.logError('Registration error', error, { username: req.body.username, ip: req.ip });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
@@ -68,10 +84,12 @@ app.post('/api/register', async (req, res) => {
 
 // Login
 app.post('/api/login', async (req, res) => {
+  const startTime = Date.now();
   try {
     const { username, password } = req.body;
 
     if (!username || !password) {
+      logger.auth('Login attempt', username, false, req.ip);
       return res.status(400).json({ message: 'Username and password are required' });
     }
 
@@ -80,12 +98,14 @@ app.post('/api/login', async (req, res) => {
     });
 
     if (!user) {
+      logger.auth('Login attempt', username, false, req.ip);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
+      logger.auth('Login attempt', username, false, req.ip);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -93,8 +113,14 @@ app.post('/api/login', async (req, res) => {
       expiresIn: '24h',
     });
 
+    const duration = Date.now() - startTime;
+    logger.database('SELECT', 'user', duration);
+    logger.auth('Login', username, true, req.ip);
     res.json({ token, userId: user.id, username: user.username });
   } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.database('SELECT', 'user', duration, error);
+    logger.logError('Login error', error, { username: req.body.username, ip: req.ip });
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -275,10 +301,43 @@ app.delete('/api/houses/:id', authenticateToken, async (req, res) => {
 const PORT = process.env.PORT || config.PORT;
 const HOST = process.env.HOST || config.HOST;
 
+// Error handling middleware
+app.use(errorLogger);
+
+// Global error handler
+app.use((err, req, res, next) => {
+  logger.logError('Unhandled error', err, {
+    url: req.url,
+    method: req.method,
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  
+  res.status(500).json({ 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  logger.connectivity(`404 - Route not found: ${req.method} ${req.originalUrl}`, {
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  res.status(404).json({ message: 'Route not found' });
+});
+
 app.listen(PORT, HOST, () => {
+  logger.server(`Server started successfully`, {
+    host: HOST,
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development'
+  });
   console.log(`Server running on ${HOST}:${PORT}`);
   console.log(`Local access: http://localhost:${PORT}`);
   console.log(`Network access: http://217.154.244.187:${PORT}`);
+  console.log(`Logs directory: ${__dirname}/logs`);
 });
 
 // Graceful shutdown
