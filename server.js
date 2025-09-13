@@ -14,7 +14,32 @@ const prisma = new PrismaClient();
 app.use(requestLogger);
 app.use(corsErrorLogger);
 app.use(cors({
-  origin: config.CORS_ORIGINS,
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in the allowed list
+    if (config.CORS_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // Allow Vercel deployments (any subdomain of vercel.app)
+    if (origin && origin.match(/^https:\/\/.*\.vercel\.app$/)) {
+      return callback(null, true);
+    }
+    
+    // Allow localhost with any port for development
+    if (origin && origin.match(/^https?:\/\/localhost:\d+$/)) {
+      return callback(null, true);
+    }
+    
+    // Allow any subdomain of gwsudan.xyz
+    if (origin && origin.match(/^https?:\/\/.*\.gwsudan\.xyz$/)) {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -41,6 +66,26 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// Admin-only middleware
+const requireAdmin = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { role: true }
+    });
+
+    if (!user || user.role !== 'ADMIN') {
+      logger.auth('Admin access attempt', req.user.username, false, req.ip);
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    next();
+  } catch (error) {
+    logger.logError('Admin role check error', error, { userId: req.user.userId, ip: req.ip });
+    res.status(500).json({ message: 'Internal server error' });
+  }
 };
 
 // Routes
@@ -105,6 +150,12 @@ app.post('/api/login', async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { username },
+      select: {
+        id: true,
+        username: true,
+        password: true,
+        role: true
+      }
     });
 
     if (!user) {
@@ -119,14 +170,23 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
+    const token = jwt.sign({ 
+      userId: user.id, 
+      username: user.username, 
+      role: user.role 
+    }, JWT_SECRET, {
       expiresIn: '24h',
     });
 
     const duration = Date.now() - startTime;
     logger.database('SELECT', 'user', duration);
     logger.auth('Login', username, true, req.ip);
-    res.json({ token, userId: user.id, username: user.username });
+    res.json({ 
+      token, 
+      userId: user.id, 
+      username: user.username, 
+      role: user.role 
+    });
   } catch (error) {
     const duration = Date.now() - startTime;
     logger.database('SELECT', 'user', duration, error);
@@ -183,7 +243,7 @@ app.get('/api/squares/:id/houses', authenticateToken, async (req, res) => {
 });
 
 // Create neighborhood
-app.post('/api/neighborhoods', authenticateToken, async (req, res) => {
+app.post('/api/neighborhoods', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name } = req.body;
     const neighborhood = await prisma.neighborhood.create({
@@ -200,7 +260,7 @@ app.post('/api/neighborhoods', authenticateToken, async (req, res) => {
 });
 
 // Create square
-app.post('/api/squares', authenticateToken, async (req, res) => {
+app.post('/api/squares', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, neighborhoodId } = req.body;
     const square = await prisma.square.create({
@@ -213,7 +273,7 @@ app.post('/api/squares', authenticateToken, async (req, res) => {
 });
 
 // Create house
-app.post('/api/houses', authenticateToken, async (req, res) => {
+app.post('/api/houses', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { houseNumber, ownerName, ownerPhone, isOccupied, hasPaid, paymentType, requiredAmount, receiptImage, squareId } = req.body;
     
@@ -249,7 +309,7 @@ app.post('/api/houses', authenticateToken, async (req, res) => {
 });
 
 // Update house
-app.put('/api/houses/:id', authenticateToken, async (req, res) => {
+app.put('/api/houses/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { houseNumber, ownerName, ownerPhone, isOccupied, hasPaid, paymentType, requiredAmount, receiptImage } = req.body;
@@ -296,7 +356,7 @@ app.put('/api/houses/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete house
-app.delete('/api/houses/:id', authenticateToken, async (req, res) => {
+app.delete('/api/houses/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.house.delete({
@@ -309,7 +369,7 @@ app.delete('/api/houses/:id', authenticateToken, async (req, res) => {
 });
 
 // Get all users (admin only)
-app.get('/api/users', authenticateToken, async (req, res) => {
+app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       select: {
@@ -327,7 +387,7 @@ app.get('/api/users', authenticateToken, async (req, res) => {
 });
 
 // Get user by ID
-app.get('/api/users/:id', authenticateToken, async (req, res) => {
+app.get('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const user = await prisma.user.findUnique({
@@ -349,7 +409,7 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
 });
 
 // Update user
-app.put('/api/users/:id', authenticateToken, async (req, res) => {
+app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { username, password } = req.body;
@@ -380,7 +440,7 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete user
-app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+app.delete('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.user.delete({
@@ -393,7 +453,7 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
 });
 
 // Get all squares
-app.get('/api/squares', authenticateToken, async (req, res) => {
+app.get('/api/squares', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const squares = await prisma.square.findMany({
       include: {
@@ -409,7 +469,7 @@ app.get('/api/squares', authenticateToken, async (req, res) => {
 });
 
 // Get square by ID
-app.get('/api/squares/:id', authenticateToken, async (req, res) => {
+app.get('/api/squares/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const square = await prisma.square.findUnique({
@@ -429,7 +489,7 @@ app.get('/api/squares/:id', authenticateToken, async (req, res) => {
 });
 
 // Update square
-app.put('/api/squares/:id', authenticateToken, async (req, res) => {
+app.put('/api/squares/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, neighborhoodId } = req.body;
@@ -449,7 +509,7 @@ app.put('/api/squares/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete square
-app.delete('/api/squares/:id', authenticateToken, async (req, res) => {
+app.delete('/api/squares/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.square.delete({
@@ -462,7 +522,7 @@ app.delete('/api/squares/:id', authenticateToken, async (req, res) => {
 });
 
 // Update neighborhood
-app.put('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
+app.put('/api/neighborhoods/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
@@ -482,7 +542,7 @@ app.put('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete neighborhood
-app.delete('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
+app.delete('/api/neighborhoods/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.neighborhood.delete({
@@ -495,7 +555,7 @@ app.delete('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
 });
 
 // Get all houses
-app.get('/api/houses', authenticateToken, async (req, res) => {
+app.get('/api/houses', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const houses = await prisma.house.findMany({
       include: {
@@ -514,7 +574,7 @@ app.get('/api/houses', authenticateToken, async (req, res) => {
 });
 
 // Get squares export data
-app.get('/api/squares/export', authenticateToken, async (req, res) => {
+app.get('/api/squares/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const squares = await prisma.square.findMany({
       include: {

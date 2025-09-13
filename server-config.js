@@ -31,6 +31,11 @@ module.exports = {
     // Admin Panel URLs
     'http://localhost:3001',
     'https://admin.gwsudan.xyz',
-    'http://admin.gwsudan.xyz'
+    'http://admin.gwsudan.xyz',
+    // Vercel Admin Panel URLs
+    'https://admin-panel-oucm96sgv-sajaaads-projects.vercel.app',
+    'https://admin-panel-oucm96sgv-sajaaads-projects.vercel.app/',
+    // Wildcard for all Vercel deployments
+    'https://*.vercel.app'
   ]
 };

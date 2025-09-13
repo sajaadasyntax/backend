@@ -15,10 +15,16 @@ model User {
   id        String   @id @default(cuid())
   username  String   @unique
   password  String
+  role      UserRole @default(MOBILE_USER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  MOBILE_USER
 }
 
 model Neighborhood {
