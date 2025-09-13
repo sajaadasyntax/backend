@@ -3,16 +3,20 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
+const config = require('./server-config');
 
 const app = express();
 const prisma = new PrismaClient();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: config.CORS_ORIGINS,
+  credentials: true
+}));
 app.use(express.json());
 
 // JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-here';
+const JWT_SECRET = process.env.JWT_SECRET || config.JWT_SECRET;
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
@@ -268,10 +272,13 @@ app.delete('/api/houses/:id', authenticateToken, async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || config.PORT;
+const HOST = process.env.HOST || config.HOST;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
+  console.log(`Local access: http://localhost:${PORT}`);
+  console.log(`Network access: http://217.154.244.187:${PORT}`);
 });
 
 // Graceful shutdown
