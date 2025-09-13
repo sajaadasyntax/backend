@@ -45,6 +45,16 @@ const authenticateToken = (req, res, next) => {
 
 // Routes
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Register
 app.post('/api/register', async (req, res) => {
   const startTime = Date.now();
@@ -298,6 +308,248 @@ app.delete('/api/houses/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Get all users (admin only)
+app.get('/api/users', authenticateToken, async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get user by ID
+app.get('/api/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        username: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Update user
+app.put('/api/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, password } = req.body;
+
+    const updateData = { username };
+    if (password) {
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        username: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    res.json(user);
+  } catch (error) {
+    if (error.code === 'P2002') {
+      res.status(400).json({ message: 'Username already exists' });
+    } else {
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+});
+
+// Delete user
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.user.delete({
+      where: { id },
+    });
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get all squares
+app.get('/api/squares', authenticateToken, async (req, res) => {
+  try {
+    const squares = await prisma.square.findMany({
+      include: {
+        neighborhood: true,
+        houses: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+    res.json(squares);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get square by ID
+app.get('/api/squares/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const square = await prisma.square.findUnique({
+      where: { id },
+      include: {
+        neighborhood: true,
+        houses: true,
+      },
+    });
+    if (!square) {
+      return res.status(404).json({ message: 'Square not found' });
+    }
+    res.json(square);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Update square
+app.put('/api/squares/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, neighborhoodId } = req.body;
+    
+    const square = await prisma.square.update({
+      where: { id },
+      data: { name, neighborhoodId },
+      include: {
+        neighborhood: true,
+        houses: true,
+      },
+    });
+    res.json(square);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Delete square
+app.delete('/api/squares/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.square.delete({
+      where: { id },
+    });
+    res.json({ message: 'Square deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Update neighborhood
+app.put('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    
+    const neighborhood = await prisma.neighborhood.update({
+      where: { id },
+      data: { name },
+    });
+    res.json(neighborhood);
+  } catch (error) {
+    if (error.code === 'P2002') {
+      res.status(400).json({ message: 'Neighborhood name already exists' });
+    } else {
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+});
+
+// Delete neighborhood
+app.delete('/api/neighborhoods/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.neighborhood.delete({
+      where: { id },
+    });
+    res.json({ message: 'Neighborhood deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get all houses
+app.get('/api/houses', authenticateToken, async (req, res) => {
+  try {
+    const houses = await prisma.house.findMany({
+      include: {
+        square: {
+          include: {
+            neighborhood: true,
+          },
+        },
+      },
+      orderBy: { houseNumber: 'asc' },
+    });
+    res.json(houses);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get squares export data
+app.get('/api/squares/export', authenticateToken, async (req, res) => {
+  try {
+    const squares = await prisma.square.findMany({
+      include: {
+        neighborhood: true,
+        houses: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+    res.json(squares);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get user profile (for auth context)
+app.get('/api/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: {
+        id: true,
+        username: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 const PORT = process.env.PORT || config.PORT;
 const HOST = process.env.HOST || config.HOST;
 
@@ -319,8 +571,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use('*', (req, res) => {
+// 404 handler - catch all unmatched routes
+app.use((req, res) => {
   logger.connectivity(`404 - Route not found: ${req.method} ${req.originalUrl}`, {
     ip: req.ip,
     userAgent: req.get('User-Agent')

@@ -22,8 +22,15 @@ module.exports = {
     'http://localhost:3000',
     'http://192.168.0.103:3000',
     'http://217.154.244.187:3000',
+    'https://gwsudan.xyz',
+    'http://gwsudan.xyz',
     'http://localhost:19006',
     'exp://192.168.0.103:19000',
-    'exp://217.154.244.187:19000'
+    'exp://217.154.244.187:19000',
+    'exp://gwsudan.xyz:19000',
+    // Admin Panel URLs
+    'http://localhost:3001',
+    'https://admin.gwsudan.xyz',
+    'http://admin.gwsudan.xyz'
   ]
 };
