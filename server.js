@@ -405,6 +405,7 @@ app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
       select: {
         id: true,
         username: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -425,6 +426,7 @@ app.get('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
       select: {
         id: true,
         username: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -455,6 +457,7 @@ app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
       select: {
         id: true,
         username: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },
