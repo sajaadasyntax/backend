@@ -2,10 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const config = require('./server-config');
 const logger = require('./logger');
 const { requestLogger, errorLogger, corsErrorLogger } = require('./middleware/requestLogger');
+const { checkAndRunMonthlyBilling, triggerMonthlyBilling } = require('./services/monthlyBilling');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -84,6 +86,26 @@ const requireAdmin = async (req, res, next) => {
     next();
   } catch (error) {
     logger.logError('Admin role check error', error, { userId: req.user.userId, ip: req.ip });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Mobile user middleware (allows both MOBILE_USER and ADMIN)
+const requireMobileUser = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { role: true }
+    });
+
+    if (!user || (user.role !== 'MOBILE_USER' && user.role !== 'ADMIN')) {
+      logger.auth('Mobile user access attempt', req.user.username, false, req.ip);
+      return res.status(403).json({ message: 'Mobile user access required' });
+    }
+
+    next();
+  } catch (error) {
+    logger.logError('Mobile user role check error', error, { userId: req.user.userId, ip: req.ip });
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -336,18 +358,26 @@ app.put('/api/houses/:id', authenticateToken, requireAdmin, async (req, res) => 
       return res.status(400).json({ message: 'رقم المنزل موجود بالفعل في هذا المربع' });
     }
     
+    // If payment status is being set to true, update lastPaymentDate
+    const updateData = {
+      houseNumber,
+      ownerName,
+      ownerPhone,
+      isOccupied,
+      hasPaid,
+      paymentType,
+      requiredAmount,
+      receiptImage,
+    };
+
+    // If hasPaid is being set to true, set lastPaymentDate to now
+    if (hasPaid === true) {
+      updateData.lastPaymentDate = new Date();
+    }
+
     const house = await prisma.house.update({
       where: { id },
-      data: {
-        houseNumber,
-        ownerName,
-        ownerPhone,
-        isOccupied,
-        hasPaid,
-        paymentType,
-        requiredAmount,
-        receiptImage,
-      },
+      data: updateData,
     });
     res.json(house);
   } catch (error) {
@@ -597,6 +627,7 @@ app.get('/api/me', authenticateToken, async (req, res) => {
       select: {
         id: true,
         username: true,
+        role: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -606,6 +637,146 @@ app.get('/api/me', authenticateToken, async (req, res) => {
     }
     res.json(user);
   } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Mobile user endpoints (read-only access)
+// Get all neighborhoods (mobile users can view)
+app.get('/api/mobile/neighborhoods', authenticateToken, requireMobileUser, async (req, res) => {
+  try {
+    const neighborhoods = await prisma.neighborhood.findMany({
+      include: {
+        squares: {
+          include: {
+            houses: {
+              select: {
+                id: true,
+                houseNumber: true,
+                ownerName: true,
+                ownerPhone: true,
+                isOccupied: true,
+                hasPaid: true,
+                paymentType: true,
+                requiredAmount: true,
+                lastPaymentDate: true,
+                createdAt: true,
+                updatedAt: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+    res.json(neighborhoods);
+  } catch (error) {
+    logger.logError('Mobile neighborhoods fetch error', error, { userId: req.user.userId });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get houses for a specific square (mobile users can view)
+app.get('/api/mobile/squares/:squareId/houses', authenticateToken, requireMobileUser, async (req, res) => {
+  try {
+    const { squareId } = req.params;
+    const houses = await prisma.house.findMany({
+      where: { squareId },
+      select: {
+        id: true,
+        houseNumber: true,
+        ownerName: true,
+        ownerPhone: true,
+        isOccupied: true,
+        hasPaid: true,
+        paymentType: true,
+        requiredAmount: true,
+        lastPaymentDate: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { houseNumber: 'asc' },
+    });
+    res.json(houses);
+  } catch (error) {
+    logger.logError('Mobile houses fetch error', error, { userId: req.user.userId, squareId: req.params.squareId });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Create house (mobile users can create)
+app.post('/api/mobile/houses', authenticateToken, requireMobileUser, async (req, res) => {
+  try {
+    const { houseNumber, ownerName, ownerPhone, isOccupied, hasPaid, paymentType, requiredAmount, receiptImage, squareId } = req.body;
+    
+    // Check if house number already exists in the same square
+    const existingHouse = await prisma.house.findFirst({
+      where: {
+        houseNumber,
+        squareId,
+      },
+    });
+
+    if (existingHouse) {
+      return res.status(400).json({ message: 'رقم المنزل موجود بالفعل في هذا المربع' });
+    }
+
+    const house = await prisma.house.create({
+      data: {
+        houseNumber,
+        ownerName,
+        ownerPhone,
+        isOccupied: isOccupied ?? true,
+        hasPaid: hasPaid ?? false,
+        paymentType: paymentType ?? 'SMALL_METER',
+        requiredAmount,
+        receiptImage,
+        squareId,
+      },
+    });
+    res.status(201).json(house);
+  } catch (error) {
+    logger.logError('Mobile house creation error', error, { userId: req.user.userId, squareId: req.body.squareId });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Monthly billing endpoints
+// Trigger monthly billing manually (admin only)
+app.post('/api/billing/trigger', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await triggerMonthlyBilling();
+    res.json(result);
+  } catch (error) {
+    logger.logError('Manual billing trigger error', error, { userId: req.user.userId });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get billing status
+app.get('/api/billing/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const totalHouses = await prisma.house.count({
+      where: { isOccupied: true }
+    });
+    
+    const paidHouses = await prisma.house.count({
+      where: { 
+        isOccupied: true,
+        hasPaid: true 
+      }
+    });
+    
+    const unpaidHouses = totalHouses - paidHouses;
+    
+    res.json({
+      totalHouses,
+      paidHouses,
+      unpaidHouses,
+      paymentRate: totalHouses > 0 ? (paidHouses / totalHouses * 100).toFixed(2) : 0
+    });
+  } catch (error) {
+    logger.logError('Billing status error', error, { userId: req.user.userId });
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -640,6 +811,22 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
+// Set up cron job for monthly billing
+// Run every day at 2:00 AM to check if it's the 31st day
+cron.schedule('0 2 * * *', async () => {
+  logger.info('Running daily billing check...');
+  try {
+    const result = await checkAndRunMonthlyBilling();
+    if (result.success) {
+      logger.info('Daily billing check completed', result);
+    } else {
+      logger.logError('Daily billing check failed', new Error(result.error));
+    }
+  } catch (error) {
+    logger.logError('Cron job error', error);
+  }
+});
+
 app.listen(PORT, HOST, () => {
   logger.server(`Server started successfully`, {
     host: HOST,
@@ -650,6 +837,7 @@ app.listen(PORT, HOST, () => {
   console.log(`Local access: http://localhost:${PORT}`);
   console.log(`Network access: http://217.154.244.187:${PORT}`);
   console.log(`Logs directory: ${__dirname}/logs`);
+  console.log('Monthly billing cron job scheduled for 2:00 AM daily');
 });
 
 // Graceful shutdown

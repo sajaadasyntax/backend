@@ -61,6 +61,7 @@ model House {
   paymentType  PaymentType? @default(SMALL_METER)
   requiredAmount Float?
   receiptImage String?
+  lastPaymentDate DateTime?
   squareId     String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
