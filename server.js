@@ -44,7 +44,7 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || config.JWT_SECRET;
