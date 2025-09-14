@@ -748,15 +748,21 @@ app.post('/api/mobile/houses', authenticateToken, requireMobileUser, async (req,
 app.put('/api/mobile/houses/:id/receipt', authenticateToken, requireMobileUser, async (req, res) => {
   try {
     const { id } = req.params;
-    const { receiptImage } = req.body;
+    const { receiptImage, hasPaid } = req.body;
+
+    const updateData = { receiptImage };
+    
+    // If payment status is being updated, set hasPaid and lastPaymentDate
+    if (hasPaid !== undefined) {
+      updateData.hasPaid = hasPaid;
+      if (hasPaid === true) {
+        updateData.lastPaymentDate = new Date();
+      }
+    }
 
     const house = await prisma.house.update({
       where: { id },
-      data: { 
-        receiptImage,
-        // If payment is being made, update lastPaymentDate
-        ...(req.body.hasPaid === true && { lastPaymentDate: new Date() })
-      },
+      data: updateData,
     });
     res.json(house);
   } catch (error) {
