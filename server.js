@@ -744,6 +744,27 @@ app.post('/api/mobile/houses', authenticateToken, requireMobileUser, async (req,
   }
 });
 
+// Update house receipt image (mobile users can update receipt images)
+app.put('/api/mobile/houses/:id/receipt', authenticateToken, requireMobileUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { receiptImage } = req.body;
+
+    const house = await prisma.house.update({
+      where: { id },
+      data: { 
+        receiptImage,
+        // If payment is being made, update lastPaymentDate
+        ...(req.body.hasPaid === true && { lastPaymentDate: new Date() })
+      },
+    });
+    res.json(house);
+  } catch (error) {
+    logger.logError('Mobile house receipt update error', error, { userId: req.user.userId, houseId: req.params.id });
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // Monthly billing endpoints
 // Trigger monthly billing manually (admin only)
 app.post('/api/billing/trigger', authenticateToken, requireAdmin, async (req, res) => {
